@@ -11,10 +11,10 @@ use crate::size_hint;
 /// Iterator returned for the error case of `IterTools::exactly_one()`
 /// This iterator yields exactly the same elements as the input iterator.
 ///
-/// During the execution of exactly_one the iterator must be mutated.  This wrapper
+/// During the execution of `exactly_one` the iterator must be mutated.  This wrapper
 /// effectively "restores" the state of the input iterator when it's handed back.
 ///
-/// This is very similar to PutBackN except this iterator only supports 0-2 elements and does not
+/// This is very similar to `PutBackN` except this iterator only supports 0-2 elements and does not
 /// use a `Vec`.
 #[derive(Clone)]
 pub struct ExactlyOneError<I>
@@ -54,13 +54,9 @@ where
             Some(Either::Left([first, second])) => {
                 self.first_two = Some(Either::Right(second));
                 Some(first)
-            },
-            Some(Either::Right(second)) => {
-                Some(second)
             }
-            None => {
-                self.inner.next()
-            }
+            Some(Either::Right(second)) => Some(second),
+            None => self.inner.next(),
         }
     }
 
@@ -69,11 +65,11 @@ where
     }
 }
 
-
 impl<I> ExactSizeIterator for ExactlyOneError<I> where I: ExactSizeIterator {}
 
-impl<I> Display for ExactlyOneError<I> 
-    where I: Iterator,
+impl<I> Display for ExactlyOneError<I>
+where
+    I: Iterator,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let additional = self.additional_len();
@@ -85,17 +81,26 @@ impl<I> Display for ExactlyOneError<I>
     }
 }
 
-impl<I> Debug for ExactlyOneError<I> 
-    where I: Iterator + Debug,
-          I::Item: Debug,
+impl<I> Debug for ExactlyOneError<I>
+where
+    I: Iterator + Debug,
+    I::Item: Debug,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match &self.first_two {
             Some(Either::Left([first, second])) => {
-                write!(f, "ExactlyOneError[First: {:?}, Second: {:?}, RemainingIter: {:?}]", first, second, self.inner)
-            },
+                write!(
+                    f,
+                    "ExactlyOneError[First: {:?}, Second: {:?}, RemainingIter: {:?}]",
+                    first, second, self.inner
+                )
+            }
             Some(Either::Right(second)) => {
-                write!(f, "ExactlyOneError[Second: {:?}, RemainingIter: {:?}]", second, self.inner)
+                write!(
+                    f,
+                    "ExactlyOneError[Second: {:?}, RemainingIter: {:?}]",
+                    second, self.inner
+                )
             }
             None => {
                 write!(f, "ExactlyOneError[RemainingIter: {:?}]", self.inner)
@@ -105,6 +110,9 @@ impl<I> Debug for ExactlyOneError<I>
 }
 
 #[cfg(feature = "use_std")]
-impl<I> Error for ExactlyOneError<I>  where I: Iterator + Debug, I::Item: Debug, {}
-
-
+impl<I> Error for ExactlyOneError<I>
+where
+    I: Iterator + Debug,
+    I::Item: Debug,
+{
+}

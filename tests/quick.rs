@@ -3,34 +3,21 @@
 //!
 //! In particular we test the tedious size_hint and exact size correctness.
 
+use itertools::free::{
+    cloned, enumerate, multipeek, peek_nth, put_back, put_back_n, rciter, zip, zip_eq,
+};
+use itertools::Itertools;
+use itertools::{iproduct, izip, multizip, EitherOrBoth};
 use quickcheck as qc;
+use std::cmp::{max, min, Ordering};
+use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::num::Wrapping;
 use std::ops::Range;
-use std::cmp::{max, min, Ordering};
-use std::collections::{HashMap, HashSet};
-use itertools::Itertools;
-use itertools::{
-    multizip,
-    EitherOrBoth,
-    iproduct,
-    izip,
-};
-use itertools::free::{
-    cloned,
-    enumerate,
-    multipeek,
-    peek_nth,
-    put_back,
-    put_back_n,
-    rciter,
-    zip,
-    zip_eq,
-};
 
-use rand::Rng;
-use rand::seq::SliceRandom;
 use quickcheck::TestResult;
+use rand::seq::SliceRandom;
+use rand::Rng;
 
 /// Trait for size hint modifier types
 trait HintKind: Copy + Send + qc::Arbitrary {
@@ -66,8 +53,10 @@ struct Inexact {
 impl HintKind for Inexact {
     fn loosen_bounds(&self, org_hint: (usize, Option<usize>)) -> (usize, Option<usize>) {
         let (org_lower, org_upper) = org_hint;
-        (org_lower.saturating_sub(self.underestimate),
-         org_upper.and_then(move |x| x.checked_add(self.overestimate)))
+        (
+            org_lower.saturating_sub(self.underestimate),
+            org_upper.and_then(move |x| x.checked_add(self.overestimate)),
+        )
     }
 }
 
@@ -84,19 +73,15 @@ impl qc::Arbitrary for Inexact {
         }
     }
 
-    fn shrink(&self) -> Box<dyn Iterator<Item=Self>> {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
         let underestimate_value = self.underestimate;
         let overestimate_value = self.overestimate;
-        Box::new(
-            underestimate_value.shrink().flat_map(move |ue_value|
-                overestimate_value.shrink().map(move |oe_value|
-                    Inexact {
-                        underestimate: ue_value,
-                        overestimate: oe_value,
-                    }
-                )
-            )
-        )
+        Box::new(underestimate_value.shrink().flat_map(move |ue_value| {
+            overestimate_value.shrink().map(move |oe_value| Inexact {
+                underestimate: ue_value,
+                overestimate: oe_value,
+            })
+        }))
     }
 }
 
@@ -116,7 +101,9 @@ struct Iter<T, SK: HintKind = Inexact> {
     hint_kind: SK,
 }
 
-impl<T, HK> Iter<T, HK> where HK: HintKind
+impl<T, HK> Iter<T, HK>
+where
+    HK: HintKind,
 {
     fn new(it: Range<T>, hint_kind: HK) -> Self {
         Iter {
@@ -128,64 +115,66 @@ impl<T, HK> Iter<T, HK> where HK: HintKind
 }
 
 impl<T, HK> Iterator for Iter<T, HK>
-    where Range<T>: Iterator,
-          <Range<T> as Iterator>::Item: Default,
-          HK: HintKind,
+where
+    Range<T>: Iterator,
+    <Range<T> as Iterator>::Item: Default,
+    HK: HintKind,
 {
     type Item = <Range<T> as Iterator>::Item;
 
-    fn next(&mut self) -> Option<Self::Item>
-    {
+    fn next(&mut self) -> Option<Self::Item> {
         let elt = self.iterator.next();
         if elt.is_none() {
             self.fuse_flag += 1;
             // check fuse flag
             if self.fuse_flag == 2 {
-                return Some(Default::default())
+                return Some(Default::default());
             }
         }
         elt
     }
 
-    fn size_hint(&self) -> (usize, Option<usize>)
-    {
+    fn size_hint(&self) -> (usize, Option<usize>) {
         let org_hint = self.iterator.size_hint();
         self.hint_kind.loosen_bounds(org_hint)
     }
 }
 
 impl<T, HK> DoubleEndedIterator for Iter<T, HK>
-    where Range<T>: DoubleEndedIterator,
-          <Range<T> as Iterator>::Item: Default,
-          HK: HintKind
+where
+    Range<T>: DoubleEndedIterator,
+    <Range<T> as Iterator>::Item: Default,
+    HK: HintKind,
 {
-    fn next_back(&mut self) -> Option<Self::Item> { self.iterator.next_back() }
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iterator.next_back()
+    }
 }
 
-impl<T> ExactSizeIterator for Iter<T, Exact> where Range<T>: ExactSizeIterator,
+impl<T> ExactSizeIterator for Iter<T, Exact>
+where
+    Range<T>: ExactSizeIterator,
     <Range<T> as Iterator>::Item: Default,
-{ }
+{
+}
 
 impl<T, HK> qc::Arbitrary for Iter<T, HK>
-    where T: qc::Arbitrary,
-          HK: HintKind,
+where
+    T: qc::Arbitrary,
+    HK: HintKind,
 {
-    fn arbitrary<G: qc::Gen>(g: &mut G) -> Self
-    {
+    fn arbitrary<G: qc::Gen>(g: &mut G) -> Self {
         Iter::new(T::arbitrary(g)..T::arbitrary(g), HK::arbitrary(g))
     }
 
-    fn shrink(&self) -> Box<dyn Iterator<Item=Iter<T, HK>>>
-    {
+    fn shrink(&self) -> Box<dyn Iterator<Item = Iter<T, HK>>> {
         let r = self.iterator.clone();
         let hint_kind = self.hint_kind;
-        Box::new(
-            r.start.shrink().flat_map(move |a|
-                r.end.shrink().map(move |b|
-                    Iter::new(a.clone()..b, hint_kind)
-                )
-            )
-        )
+        Box::new(r.start.shrink().flat_map(move |a| {
+            r.end
+                .shrink()
+                .map(move |b| Iter::new(a.clone()..b, hint_kind))
+        }))
     }
 }
 
@@ -201,7 +190,10 @@ struct ShiftRange<HK = Inexact> {
     hint_kind: HK,
 }
 
-impl<HK> Iterator for ShiftRange<HK> where HK: HintKind {
+impl<HK> Iterator for ShiftRange<HK>
+where
+    HK: HintKind,
+{
     type Item = Iter<i32, HK>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -219,10 +211,11 @@ impl<HK> Iterator for ShiftRange<HK> where HK: HintKind {
     }
 }
 
-impl ExactSizeIterator for ShiftRange<Exact> { }
+impl ExactSizeIterator for ShiftRange<Exact> {}
 
 impl<HK> qc::Arbitrary for ShiftRange<HK>
-    where HK: HintKind
+where
+    HK: HintKind,
 {
     fn arbitrary<G: qc::Gen>(g: &mut G) -> Self {
         const MAX_STARTING_RANGE_DIFF: i32 = 32;
@@ -250,7 +243,7 @@ impl<HK> qc::Arbitrary for ShiftRange<HK>
 fn correct_count<I, F>(get_it: F) -> bool
 where
     I: Iterator,
-    F: Fn() -> I
+    F: Fn() -> I,
 {
     let mut counts = vec![get_it().count()];
 
@@ -258,12 +251,13 @@ where
         let mut it = get_it();
 
         for _ in 0..(counts.len() - 1) {
-            if let None = it.next() {
+            #[allow(clippy::manual_assert)]
+            if it.next().is_none() {
                 panic!("Iterator shouldn't be finished, may not be deterministic");
             }
         }
 
-        if let None = it.next() {
+        if it.next().is_none() {
             break 'outer;
         }
 
@@ -275,7 +269,10 @@ where
     for (i, returned_count) in counts.into_iter().enumerate() {
         let actual_count = total_actual_count - i;
         if actual_count != returned_count {
-            println!("Total iterations: {} True count: {} returned count: {}", i, actual_count, returned_count);
+            println!(
+                "Total iterations: {} True count: {} returned count: {}",
+                i, actual_count, returned_count
+            );
 
             return false;
         }
@@ -298,12 +295,10 @@ fn correct_size_hint<I: Iterator>(mut it: I) -> bool {
     // check all the size hints
     for &(low, hi) in &hints {
         true_count -= 1;
-        if low > true_count ||
-            (hi.is_some() && hi.unwrap() < true_count)
-        {
+        if low > true_count || (hi.is_some() && hi.unwrap() < true_count) {
             println!("True size: {:?}, size hint: {:?}", true_count, (low, hi));
             //println!("All hints: {:?}", hints);
-            return false
+            return false;
         }
     }
     true
@@ -312,13 +307,19 @@ fn correct_size_hint<I: Iterator>(mut it: I) -> bool {
 fn exact_size<I: ExactSizeIterator>(mut it: I) -> bool {
     // check every iteration
     let (mut low, mut hi) = it.size_hint();
-    if Some(low) != hi { return false; }
+    if Some(low) != hi {
+        return false;
+    }
     while let Some(_) = it.next() {
         let (xlow, xhi) = it.size_hint();
-        if low != xlow + 1 { return false; }
+        if low != xlow + 1 {
+            return false;
+        }
         low = xlow;
         hi = xhi;
-        if Some(low) != hi { return false; }
+        if Some(low) != hi {
+            return false;
+        }
     }
     let (low, hi) = it.size_hint();
     low == 0 && hi == Some(0)
@@ -328,13 +329,19 @@ fn exact_size<I: ExactSizeIterator>(mut it: I) -> bool {
 fn exact_size_for_this<I: Iterator>(mut it: I) -> bool {
     // check every iteration
     let (mut low, mut hi) = it.size_hint();
-    if Some(low) != hi { return false; }
+    if Some(low) != hi {
+        return false;
+    }
     while let Some(_) = it.next() {
         let (xlow, xhi) = it.size_hint();
-        if low != xlow + 1 { return false; }
+        if low != xlow + 1 {
+            return false;
+        }
         low = xlow;
         hi = xhi;
-        if Some(low) != hi { return false; }
+        if Some(low) != hi {
+            return false;
+        }
     }
     let (low, hi) = it.size_hint();
     low == 0 && hi == Some(0)
@@ -438,7 +445,7 @@ quickcheck! {
         }
         assert_eq!(answer, actual);
 
-        assert_eq!(answer.into_iter().last(), a.clone().multi_cartesian_product().last());
+        assert_eq!(answer.into_iter().last(), a.multi_cartesian_product().last());
     }
 
     #[allow(deprecated)]
@@ -498,15 +505,13 @@ quickcheck! {
         exact_size(it)
     }
 
-    fn equal_merge(a: Vec<i16>, b: Vec<i16>) -> bool {
-        let mut sa = a.clone();
-        let mut sb = b.clone();
-        sa.sort();
-        sb.sort();
-        let mut merged = sa.clone();
-        merged.extend(sb.iter().cloned());
+    fn equal_merge(mut a: Vec<i16>, mut b: Vec<i16>) -> bool {
+        a.sort();
+        b.sort();
+        let mut merged = a.clone();
+        merged.extend(b.iter().cloned());
         merged.sort();
-        itertools::equal(&merged, sa.iter().merge(&sb))
+        itertools::equal(&merged, a.iter().merge(&b))
     }
     fn size_merge(a: Iter<u16>, b: Iter<u16>) -> bool {
         correct_size_hint(a.merge(b))
@@ -517,7 +522,7 @@ quickcheck! {
             exact_size(multizip((a, b, c)))
     }
     fn size_zip_rc(a: Iter<i16>, b: Iter<i16>) -> bool {
-        let rc = rciter(a.clone());
+        let rc = rciter(a);
         correct_size_hint(multizip((&rc, &rc, b)))
     }
 
@@ -526,19 +531,16 @@ quickcheck! {
         correct_size_hint(izip!(filt, b.clone(), c.clone())) &&
             exact_size(izip!(a, b, c))
     }
-    fn equal_kmerge(a: Vec<i16>, b: Vec<i16>, c: Vec<i16>) -> bool {
+    fn equal_kmerge(mut a: Vec<i16>, mut b: Vec<i16>, mut c: Vec<i16>) -> bool {
         use itertools::free::kmerge;
-        let mut sa = a.clone();
-        let mut sb = b.clone();
-        let mut sc = c.clone();
-        sa.sort();
-        sb.sort();
-        sc.sort();
-        let mut merged = sa.clone();
-        merged.extend(sb.iter().cloned());
-        merged.extend(sc.iter().cloned());
+        a.sort();
+        b.sort();
+        c.sort();
+        let mut merged = a.clone();
+        merged.extend(b.iter().cloned());
+        merged.extend(c.iter().cloned());
         merged.sort();
-        itertools::equal(merged.into_iter(), kmerge(vec![sa, sb, sc]))
+        itertools::equal(merged.into_iter(), kmerge(vec![a, b, c]))
     }
 
     // Any number of input iterators
@@ -610,7 +612,7 @@ quickcheck! {
     fn size_2_zip_longest(a: Iter<i16>, b: Iter<i16>) -> bool {
         let it = a.clone().zip_longest(b.clone());
         let jt = a.clone().zip_longest(b.clone());
-        itertools::equal(a.clone(),
+        itertools::equal(a,
                          it.filter_map(|elt| match elt {
                              EitherOrBoth::Both(x, _) => Some(x),
                              EitherOrBoth::Left(x) => Some(x),
@@ -618,7 +620,7 @@ quickcheck! {
                          }
                          ))
             &&
-        itertools::equal(b.clone(),
+        itertools::equal(b,
                          jt.filter_map(|elt| match elt {
                              EitherOrBoth::Both(_, y) => Some(y),
                              EitherOrBoth::Right(y) => Some(y),
@@ -721,7 +723,7 @@ quickcheck! {
 
         assert_eq!(expected_first, curr_perm);
 
-        while let Some(next_perm) = perms.next() {
+        for next_perm in perms {
             assert!(
                 next_perm > curr_perm,
                 "next perm isn't greater-than current; next_perm={:?} curr_perm={:?} n={}",
@@ -830,6 +832,31 @@ quickcheck! {
             it.put_back(elt)
         }
         correct_size_hint(it)
+    }
+}
+
+quickcheck! {
+    fn merge_join_by_ordering_vs_bool(a: Vec<u8>, b: Vec<u8>) -> bool {
+        use either::Either;
+        use itertools::free::merge_join_by;
+        let mut has_equal = false;
+        let it_ord = merge_join_by(a.clone(), b.clone(), Ord::cmp).flat_map(|v| match v {
+            EitherOrBoth::Both(l, r) => {
+                has_equal = true;
+                vec![Either::Left(l), Either::Right(r)]
+            }
+            EitherOrBoth::Left(l) => vec![Either::Left(l)],
+            EitherOrBoth::Right(r) => vec![Either::Right(r)],
+        });
+        let it_bool = merge_join_by(a, b, PartialOrd::le);
+        itertools::equal(it_ord, it_bool) || has_equal
+    }
+    fn merge_join_by_bool_unwrapped_is_merge_by(a: Vec<u8>, b: Vec<u8>) -> bool {
+        use either::Either;
+        use itertools::free::merge_join_by;
+        let it = a.clone().into_iter().merge_by(b.clone(), PartialOrd::ge);
+        let it_join = merge_join_by(a, b, PartialOrd::ge).map(Either::into_inner);
+        itertools::equal(it, it_join)
     }
 }
 
@@ -943,8 +970,7 @@ quickcheck! {
     fn fuzz_group_by_lazy_1(it: Iter<u8>) -> bool {
         let jt = it.clone();
         let groups = it.group_by(|k| *k);
-        let res = itertools::equal(jt, groups.into_iter().flat_map(|(_, x)| x));
-        res
+        itertools::equal(jt, groups.into_iter().flat_map(|(_, x)| x))
     }
 }
 
@@ -999,6 +1025,17 @@ quickcheck! {
 }
 
 quickcheck! {
+    fn chunk_clone_equal(a: Vec<u8>, size: u8) -> () {
+        let mut size = size;
+        if size == 0 {
+            size += 1;
+        }
+        let it = a.chunks(size as usize);
+        itertools::assert_equal(it.clone(), it);
+    }
+}
+
+quickcheck! {
     fn equal_chunks_lazy(a: Vec<u8>, size: u8) -> bool {
         let mut size = size;
         if size == 0 {
@@ -1015,7 +1052,71 @@ quickcheck! {
     }
 }
 
+// tuple iterators
 quickcheck! {
+    fn equal_circular_tuple_windows_1(a: Vec<u8>) -> bool {
+        let x = a.iter().map(|e| (e,) );
+        let y = a.iter().circular_tuple_windows::<(_,)>();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_circular_tuple_windows_2(a: Vec<u8>) -> bool {
+        let x = (0..a.len()).map(|start_idx| (
+            &a[start_idx],
+            &a[(start_idx + 1) % a.len()],
+        ));
+        let y = a.iter().circular_tuple_windows::<(_, _)>();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_circular_tuple_windows_3(a: Vec<u8>) -> bool {
+        let x = (0..a.len()).map(|start_idx| (
+            &a[start_idx],
+            &a[(start_idx + 1) % a.len()],
+            &a[(start_idx + 2) % a.len()],
+        ));
+        let y = a.iter().circular_tuple_windows::<(_, _, _)>();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_circular_tuple_windows_4(a: Vec<u8>) -> bool {
+        let x = (0..a.len()).map(|start_idx| (
+            &a[start_idx],
+            &a[(start_idx + 1) % a.len()],
+            &a[(start_idx + 2) % a.len()],
+            &a[(start_idx + 3) % a.len()],
+        ));
+        let y = a.iter().circular_tuple_windows::<(_, _, _, _)>();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_cloned_circular_tuple_windows(a: Vec<u8>) -> bool {
+        let x = a.iter().circular_tuple_windows::<(_, _, _, _)>();
+        let y = x.clone();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_cloned_circular_tuple_windows_noninitial(a: Vec<u8>) -> bool {
+        let mut x = a.iter().circular_tuple_windows::<(_, _, _, _)>();
+        let _ = x.next();
+        let y = x.clone();
+        itertools::assert_equal(x,y);
+        true
+    }
+
+    fn equal_cloned_circular_tuple_windows_complete(a: Vec<u8>) -> bool {
+        let mut x = a.iter().circular_tuple_windows::<(_, _, _, _)>();
+        for _ in x.by_ref() {}
+        let y = x.clone();
+        itertools::assert_equal(x,y);
+        true
+    }
+
     fn equal_tuple_windows_1(a: Vec<u8>) -> bool {
         let x = a.windows(1).map(|s| (&s[0], ));
         let y = a.iter().tuple_windows::<(_,)>();
@@ -1237,7 +1338,7 @@ quickcheck! {
                     Some(acc.unwrap_or(0) + val)
                 }
             });
-        
+
         let group_map_lookup = a.iter()
             .map(|&b| b as u64)
             .map(|i| (i % modulo, i))
@@ -1257,7 +1358,7 @@ quickcheck! {
 
         for m in 0..modulo {
             assert_eq!(
-                lookup.get(&m).copied(), 
+                lookup.get(&m).copied(),
                 a.iter()
                     .map(|&b| b as u64)
                     .filter(|&val| val % modulo == m)
@@ -1286,7 +1387,7 @@ quickcheck! {
             .map(|i| (i % modulo, i))
             .into_group_map()
             .into_iter()
-            .map(|(key, vals)| (key, vals.into_iter().fold(0u64, |acc, val| acc + val)))
+            .map(|(key, vals)| (key, vals.into_iter().sum()))
             .collect::<HashMap<_,_>>();
         assert_eq!(lookup, group_map_lookup);
 
@@ -1377,7 +1478,7 @@ quickcheck! {
             assert_eq!(Some(max), a.iter().copied().filter(|&val| val % modulo == key).max_by_key(|&val| val));
         }
     }
-    
+
     fn correct_grouping_map_by_min_modulo_key(a: Vec<u8>, modulo: u8) -> () {
         let modulo = if modulo == 0 { 1 } else { modulo }; // Avoid `% 0`
         let lookup = a.iter().copied().into_grouping_map_by(|i| i % modulo).min();
@@ -1428,7 +1529,7 @@ quickcheck! {
             assert_eq!(Some(min), a.iter().copied().filter(|&val| val % modulo == key).min_by_key(|&val| val));
         }
     }
-    
+
     fn correct_grouping_map_by_minmax_modulo_key(a: Vec<u8>, modulo: u8) -> () {
         let modulo = if modulo == 0 { 1 } else { modulo }; // Avoid `% 0`
         let lookup = a.iter().copied().into_grouping_map_by(|i| i % modulo).minmax();
@@ -1541,7 +1642,7 @@ quickcheck! {
             .min_by(|_, _, _| Ordering::Equal);
 
         assert_eq!(lookup[&0], 0);
-        
+
         let lookup = (0..=10)
             .into_grouping_map_by(|_| 0)
             .minmax_by(|_, _, _| Ordering::Equal);
@@ -1551,10 +1652,10 @@ quickcheck! {
 }
 
 quickcheck! {
-    #[test]
     fn counts(nums: Vec<isize>) -> TestResult {
         let counts = nums.iter().counts();
         for (&item, &count) in counts.iter() {
+            #[allow(clippy::absurd_extreme_comparisons)]
             if count <= 0 {
                 return TestResult::failed();
             }
@@ -1599,12 +1700,10 @@ quickcheck! {
     }
 }
 
-
-fn is_fused<I: Iterator>(mut it: I) -> bool
-{
-    while let Some(_) = it.next() {}
-    for _ in 0..10{
-        if it.next().is_some(){
+fn is_fused<I: Iterator>(mut it: I) -> bool {
+    for _ in it.by_ref() {}
+    for _ in 0..10 {
+        if it.next().is_some() {
             return false;
         }
     }
@@ -1645,7 +1744,7 @@ quickcheck! {
         !is_fused(a.clone().interleave_shortest(b.clone())) &&
         is_fused(a.fuse().interleave_shortest(b.fuse()))
     }
-    
+
     fn fused_product(a: Iter<i16>, b: Iter<i16>) -> bool
     {
         is_fused(a.fuse().cartesian_product(b.fuse()))
@@ -1693,3 +1792,62 @@ quickcheck! {
     }
 }
 
+quickcheck! {
+    fn min_set_contains_min(a: Vec<(usize, char)>) -> bool {
+        let result_set = a.iter().min_set();
+        if let Some(result_element) = a.iter().min() {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+
+    fn min_set_by_contains_min(a: Vec<(usize, char)>) -> bool {
+        let compare = |x: &&(usize, char), y: &&(usize, char)| x.1.cmp(&y.1);
+        let result_set = a.iter().min_set_by(compare);
+        if let Some(result_element) = a.iter().min_by(compare) {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+
+    fn min_set_by_key_contains_min(a: Vec<(usize, char)>) -> bool {
+        let key = |x: &&(usize, char)| x.1;
+        let result_set = a.iter().min_set_by_key(&key);
+        if let Some(result_element) = a.iter().min_by_key(&key) {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+
+    fn max_set_contains_max(a: Vec<(usize, char)>) -> bool {
+        let result_set = a.iter().max_set();
+        if let Some(result_element) = a.iter().max() {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+
+    fn max_set_by_contains_max(a: Vec<(usize, char)>) -> bool {
+        let compare = |x: &&(usize, char), y: &&(usize, char)| x.1.cmp(&y.1);
+        let result_set = a.iter().max_set_by(compare);
+        if let Some(result_element) = a.iter().max_by(compare) {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+
+    fn max_set_by_key_contains_max(a: Vec<(usize, char)>) -> bool {
+        let key = |x: &&(usize, char)| x.1;
+        let result_set = a.iter().max_set_by_key(&key);
+        if let Some(result_element) = a.iter().max_by_key(&key) {
+            result_set.contains(&result_element)
+        } else {
+            result_set.is_empty()
+        }
+    }
+}
